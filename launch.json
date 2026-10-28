@@ -1,0 +1,39 @@
+{
+  "kind": "custom_token",
+  "token": {
+    "contract": "KeptToken",
+    "name": "keptonchain",
+    "symbol": "KEPT",
+    "decimals": 18,
+    "constructorArgs": [],
+    "totalSupply": "1000000000000000000000000000"
+  },
+  "contracts": [
+    {
+      "contract": "PledgeVault",
+      "constructorArgs": [
+        "$requester",
+        "0xd34a99bc0f67ae1bbd63c660e6d0b0dd03e263b7"
+      ]
+    },
+    {
+      "contract": "RefereeFund",
+      "constructorArgs": [
+        "0xd34a99bc0f67ae1bbd63c660e6d0b0dd03e263b7",
+        "$contract:PledgeVault"
+      ]
+    }
+  ],
+  "pool": {
+    "pairedCurrency": "0xd34a99bc0f67ae1bbd63c660e6d0b0dd03e263b7",
+    "fee": 12500,
+    "tickSpacing": 60,
+    "initialPrice": "79228162514264337593543950336"
+  },
+  "economics": {
+    "poolBps": 7000,
+    "initialMarketCapWei": "2500000000000000000000",
+    "remainderTo": "0xee2aaa315cf7ed169f93148d30d24af9318dbb66"
+  },
+  "notes": "KeptToken (keptonchain, KEPT) is a plain fixed-supply ERC-20 with 18 decimals: its constructor takes no arguments and mints 1,000,000,000 KEPT (1000000000000000000000000000 minor units) once to msg.sender, the launch factory. It has no owner, no mint, no pause, no blocklist and no transfer rule; it adds ERC20Burnable (holders burn their own tokens) and ERC-2612 permit. PledgeVault(address owner_, address imd_) lets a team lock any plain ERC-20 behind up to eight public milestones; the IMD swarm's signer panel returns EIP-712 verdicts, kept tranches unlock to the beneficiary and tranches not proven within three days of their deadline burn through the token's own burn. owner_ is $requester (economics.remainderTo), who configures the oracle (intake, check price of at most 0.5 IMD, signer panel, quorum) behind a seven-day notice and sets the Referee Fund once; the owner never touches locked tokens or check budgets, and nothing can withdraw, pause or upgrade. imd_ is IMD, 0xd34a99bc0f67ae1bbd63c660e6d0b0dd03e263b7, the currency checks are paid in. RefereeFund(address imd_, address vault_) holds donated IMD and refunds the check of every kept milestone when it can; only the vault ($contract:PledgeVault) may draw and nobody may withdraw. Neither contract is allocated any KEPT at launch; the vault holds only what teams lock in it afterwards. The launch makes no initialization calls: after launch the owner calls PledgeVault.scheduleOracleConfig and applyOracleConfig, then PledgeVault.setRefereeFund with the launched RefereeFund address. pool.initialPrice is provenance only; the deployer derives the opening price from economics.initialMarketCapWei and totalSupply."
+}
