@@ -42,15 +42,17 @@ once the milestone's grace period (deadline + 3 days) is over, for a closed or w
 for a settled milestone, so no verdict can be replayed.
 
 - **Kept:** the tranche transfers to the beneficiary and the milestone settles. If a Referee Fund is
-  set, the vault asks it to refund the check; whatever the fund can pay goes back into the pledge's
-  budget. Keeping a promise costs nothing while the fund is solvent.
+  set, the vault asks it to refund the check and credits the pledge's budget with the IMD that
+  actually arrived (measured by balance, capped at the price paid), never the fund's reported
+  number. A refund that fails credits nothing and does not block the release. Keeping a promise
+  costs nothing while the fund is solvent.
 - **Not kept:** the attempt is consumed, the tokens stay locked, and the beneficiary may retry while
   attempts and budget remain.
 
 **Missed deadlines.** Once a milestone is three days past its deadline and still pending, anyone
 may call `settleMissed`. The tranche burns through the token's own `burn(uint256)`. If the token has
 no working burn (the call fails or the balance does not fall by the full tranche), the tranche stays
-in the vault forever and is counted in `stranded[token]`; `TrancheBurned` reports which happened.
+in the vault forever and whatever was not burned is counted in `stranded[token]`; `TrancheBurned` reports which happened.
 
 **Budgets.** `reclaimBudget(pledgeId)` returns the unused IMD to the creator once every milestone has
 settled (kept or burned). Anyone may trigger it.
@@ -70,7 +72,18 @@ locked tokens or budgets. The contracts contain no `delegatecall`, `callcode` or
   notice, the owner may cancel before. The first configuration from unset applies at once, because
   there is nothing to protect yet and no check can run until it exists. Existing pledges cannot exit
   during the notice; there is no exit at all.
-- `RefereeFund` is set once (`setRefereeFund`); the fund must name this vault. It has no owner.
+- `RefereeFund` is set once (`setRefereeFund`); the fund must name this vault and hold this vault's
+  IMD (`fund.imd() == vault.imd()`). It has no owner. Refunds have no per-pledge cap: any team whose
+  check is answered "kept" gets the price back, so a team pledging junk tokens behind trivially
+  true checks can cycle donations from the fund to the intake. Donors should fund it knowing that.
+- An open check has no timeout: if the panel never answers, the milestone cannot be retried and
+  burns after grace with its fee kept by the intake. A check requested in the last moments of the
+  grace period may have no time left to be answered; request checks early.
+- A milestone deadline must be below `2^64 - 1 - GRACE` (`DeadlineTooFar`), so every milestone can
+  always settle.
+- All pledges of one token share the vault's balance of it. A token whose balances can later fall
+  (rebasing, demurrage, issuer clawback) can leave the last pledges of that token unpayable. The
+  vault refuses only tokens whose transfers arrive short; use plain ERC-20 tokens.
 - The token has no owner and no privileged function of any kind.
 
 ## After launch

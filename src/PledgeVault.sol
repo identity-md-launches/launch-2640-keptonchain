@@ -191,6 +191,8 @@ contract PledgeVault is Ownable2Step, EIP712, ReentrancyGuard {
     error NoticeNotOver(uint64 readyAt);
     error FundAlreadySet();
     error FundVaultMismatch();
+    error FundTokenMismatch();
+    error DeadlineTooFar();
 
     // ───────────────────────────── construction ─────────────────────────────
 
@@ -237,6 +239,7 @@ contract PledgeVault is Ownable2Step, EIP712, ReentrancyGuard {
             if (bytes(m.check).length > MAX_CHECK_LENGTH) revert CheckTooLong();
             if (m.deadline <= block.timestamp) revert DeadlinePassed();
             if (m.deadline <= lastDeadline) revert DeadlineNotAscending();
+            if (m.deadline >= type(uint64).max - GRACE) revert DeadlineTooFar();
             lastDeadline = m.deadline;
             total += m.amount;
             ms.push(
@@ -338,7 +341,14 @@ contract PledgeVault is Ownable2Step, EIP712, ReentrancyGuard {
 
         RefereeFund fund = refereeFund;
         if (paid > 0 && address(fund) != address(0)) {
-            uint256 refunded = fund.refund(paid);
+            // Credit only the IMD that actually arrived, capped at the price paid. A failing fund
+            // never blocks a kept release.
+            uint256 before = imd.balanceOf(address(this));
+            uint256 refunded;
+            try fund.refund(paid) {
+                refunded = imd.balanceOf(address(this)) - before;
+            } catch {}
+            if (refunded > paid) refunded = paid;
             p.budget += refunded;
             p.refunded += refunded;
             emit CheckRefunded(pledgeId, milestone, paid, refunded);
@@ -427,6 +437,7 @@ contract PledgeVault is Ownable2Step, EIP712, ReentrancyGuard {
         if (fund == address(0)) revert ZeroAddress();
         if (address(refereeFund) != address(0)) revert FundAlreadySet();
         if (RefereeFund(fund).vault() != address(this)) revert FundVaultMismatch();
+        if (address(RefereeFund(fund).imd()) != address(imd)) revert FundTokenMismatch();
         refereeFund = RefereeFund(fund);
         emit RefereeFundSet(fund);
     }
@@ -518,11 +529,15 @@ contract PledgeVault is Ownable2Step, EIP712, ReentrancyGuard {
     /// @dev Burn through the token's own `burn` when it has one; otherwise the tranche stays here forever.
     function _burnTranche(uint256 pledgeId, uint256 milestone, IERC20 token, uint256 amount) private {
         bool burned = false;
+        uint256 left = amount;
         uint256 before = token.balanceOf(address(this));
         try IBurnable(address(token)).burn(amount) {
-            burned = token.balanceOf(address(this)) == before - amount;
+            uint256 afterBurn = token.balanceOf(address(this));
+            uint256 removed = before > afterBurn ? before - afterBurn : 0;
+            left = removed >= amount ? 0 : amount - removed;
+            burned = left == 0;
         } catch {}
-        if (!burned) stranded[address(token)] += amount;
+        if (left > 0) stranded[address(token)] += left;
         emit TrancheBurned(pledgeId, milestone, amount, burned);
     }
 }

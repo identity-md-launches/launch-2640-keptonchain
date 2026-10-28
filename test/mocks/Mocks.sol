@@ -40,3 +40,35 @@ contract FakeBurnToken is ERC20 {
 
     function burn(uint256) external pure {}
 }
+
+/// @notice A token whose `burn` removes only half of what it is asked to.
+contract HalfBurnToken is ERC20 {
+    constructor() ERC20("Half", "HALF") {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function burn(uint256 amount) external {
+        _burn(msg.sender, amount / 2);
+    }
+}
+
+/// @notice A fund that names the vault and its IMD but lies about refunds: `refund` returns a number
+/// without paying, or reverts.
+contract LyingFund {
+    address public immutable imd;
+    address public immutable vault;
+    bool public immutable reverts;
+
+    constructor(address imd_, address vault_, bool reverts_) {
+        imd = imd_;
+        vault = vault_;
+        reverts = reverts_;
+    }
+
+    function refund(uint256 amount) external view returns (uint256) {
+        require(!reverts, "refund failed");
+        return amount * 100;
+    }
+}

@@ -7,7 +7,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {KeptToken} from "../src/KeptToken.sol";
 import {PledgeVault} from "../src/PledgeVault.sol";
 import {RefereeFund} from "../src/RefereeFund.sol";
-import {MockERC20, FeeOnTransferToken, FakeBurnToken} from "./mocks/Mocks.sol";
+import {MockERC20, FeeOnTransferToken, FakeBurnToken, HalfBurnToken, LyingFund} from "./mocks/Mocks.sol";
 
 contract PledgeVaultTest is Test {
     uint256 constant PRICE = 0.5e18;
@@ -772,6 +772,71 @@ contract PledgeVaultTest is Test {
         vm.prank(owner);
         vm.expectRevert(PledgeVault.FundAlreadySet.selector);
         vault.setRefereeFund(address(fund));
+    }
+
+    function test_setRefereeFundRejectsFundOfAnotherToken() public {
+        MockERC20 otherToken = new MockERC20("Other", "OTH");
+        RefereeFund wrong = new RefereeFund(address(otherToken), address(vault));
+        vm.prank(owner);
+        vm.expectRevert(PledgeVault.FundTokenMismatch.selector);
+        vault.setRefereeFund(address(wrong));
+        assertEq(address(vault.refereeFund()), address(0));
+    }
+
+    function _keptWithFund(address fundAddr) internal returns (uint256 id) {
+        _configure();
+        vm.prank(owner);
+        vault.setRefereeFund(fundAddr);
+        id = _create(1, 1_000e18, PRICE);
+        vm.prank(beneficiary);
+        vault.requestCheck(id, 0);
+        uint256 expiry = block.timestamp + 1 hours;
+        vault.submitVerdict(id, 0, 1, true, expiry, _verdict(id, 0, 1, true, expiry, 2));
+    }
+
+    function test_refundCreditsOnlyImdThatArrived() public {
+        LyingFund liar = new LyingFund(address(imd), address(vault), false);
+        uint256 id = _keptWithFund(address(liar));
+        assertEq(kept.balanceOf(beneficiary), 1_000e18);
+        assertEq(vault.getPledge(id).budget, 0);
+        assertEq(vault.getPledge(id).refunded, 0);
+        assertEq(imd.balanceOf(address(vault)), 0);
+    }
+
+    function test_revertingFundDoesNotBlockKeptRelease() public {
+        LyingFund broken = new LyingFund(address(imd), address(vault), true);
+        uint256 id = _keptWithFund(address(broken));
+        assertEq(kept.balanceOf(beneficiary), 1_000e18);
+        assertEq(uint8(vault.getMilestone(id, 0).status), uint8(PledgeVault.Status.Kept));
+        assertEq(vault.getPledge(id).budget, 0);
+    }
+
+    function test_createPledgeRejectsDeadlineThatOverflowsGrace() public {
+        PledgeVault.MilestoneInput[] memory ms = _milestones(1, 1e18);
+        ms[0].deadline = type(uint64).max - vault.GRACE();
+        vm.prank(team);
+        vm.expectRevert(PledgeVault.DeadlineTooFar.selector);
+        vault.createPledge(address(kept), beneficiary, "far", ms, 0);
+
+        ms[0].deadline = type(uint64).max - vault.GRACE() - 1;
+        vm.prank(team);
+        uint256 id = vault.createPledge(address(kept), beneficiary, "far", ms, 0);
+        vm.warp(type(uint64).max);
+        vault.settleMissed(id, 0);
+        assertEq(uint8(vault.getMilestone(id, 0).status), uint8(PledgeVault.Status.Burned));
+    }
+
+    function test_partialBurnStrandsOnlyWhatRemains() public {
+        HalfBurnToken half = new HalfBurnToken();
+        half.mint(team, 200);
+        vm.startPrank(team);
+        half.approve(address(vault), type(uint256).max);
+        uint256 id = vault.createPledge(address(half), beneficiary, "half", _milestones(2, 100), 0);
+        vm.stopPrank();
+        vm.warp(T0 + 30 days + 3 days + 1);
+        vault.settleMissed(id, 0);
+        assertEq(half.balanceOf(address(vault)), 150);
+        assertEq(vault.stranded(address(half)), 50);
     }
 
     // ────────────────────────── nothing else moves ───────────────────────
